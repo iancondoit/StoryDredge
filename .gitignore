@@ -34,6 +34,8 @@ storydredge/archive/processed/*
 !storydredge/archive/processed/.gitkeep
 storydredge/output/articles/*
 !storydredge/output/articles/.gitkeep
+storydredge/output/classified/*
+!storydredge/output/classified/.gitkeep
 
 # OS specific
 .DS_Store
