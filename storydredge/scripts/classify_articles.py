@@ -1,98 +1,99 @@
 #!/usr/bin/env python3
 """
-classify_articles.py - Uses OpenAI to extract structured metadata from articles
-
-Usage:
-    python classify_articles.py [date] [--filter=<section>]
-    
-Example:
-    python classify_articles.py 1977-08-14
-    python classify_articles.py 1977-08-14 --filter=news
+classify_articles.py - Use AI to classify articles and extract structured metadata
 """
 
 import os
 import sys
 import json
-import time
+import logging
 import argparse
-from pathlib import Path
 from datetime import datetime
-from collections import Counter
-import glob
+from pathlib import Path
 from dotenv import load_dotenv
+import httpx
 from tqdm import tqdm
-import openai
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger('classify')
 
 # Load environment variables
 load_dotenv()
 
-# Project paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-ARTICLES_DIR = BASE_DIR / "output" / "articles"
-CLASSIFIED_DIR = BASE_DIR / "output" / "classified"
-DATA_DIR = BASE_DIR / "data"
-
-# OpenAI API settings
+# Default directories and API settings
+DEFAULT_PUBLICATION = os.getenv("DEFAULT_PUBLICATION", "San Antonio Express-News")
 API_KEY = os.getenv("OPENAI_API_KEY")
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
 
-# Valid section types
-VALID_SECTIONS = ["news", "ad", "editorial", "classified", "unknown"]
-
-def ensure_directories():
-    """Ensure necessary directories exist."""
-    CLASSIFIED_DIR.mkdir(parents=True, exist_ok=True)
-
-def setup_openai():
-    """Initialize the OpenAI client with the API key."""
-    if not API_KEY:
-        print("Error: OPENAI_API_KEY is not set in .env file")
-        sys.exit(1)
-    
-    openai.api_key = API_KEY
-    return openai.OpenAI(api_key=API_KEY)
-
-def load_article_files(date_str=None):
+def load_articles_from_directory(articles_dir, date_filter=None, section_filter=None):
     """
-    Load all article files or filter by date.
+    Load all article JSON files from the specified directory
     
     Args:
-        date_str (str, optional): Date string in YYYY-MM-DD format
+        articles_dir (Path): Directory containing article JSON files
+        date_filter (str): Optional date to filter articles (YYYY-MM-DD)
+        section_filter (str): Optional section type to filter by after classification
         
     Returns:
-        list: List of article file paths
+        list: List of article dictionaries
     """
-    if date_str:
-        pattern = f"{date_str}--*.json"
-        files = list(ARTICLES_DIR.glob(pattern))
-    else:
-        files = list(ARTICLES_DIR.glob("**/*.json"))
+    articles = []
     
-    return files
+    if not articles_dir.exists():
+        logger.error(f"Articles directory not found: {articles_dir}")
+        return []
+    
+    logger.info(f"Loading articles from {articles_dir}")
+    
+    # Get all JSON files in the directory
+    article_files = list(articles_dir.glob("*.json"))
+    
+    if not article_files:
+        logger.warning(f"No article files found in {articles_dir}")
+        return []
+    
+    # Load each article
+    for file_path in article_files:
+        # Check if file matches date filter (e.g., 1977-08-14-article-123.json)
+        if date_filter and date_filter not in file_path.stem:
+            continue
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                article = json.load(f)
+                
+            # Add file path for reference
+            article['file_path'] = str(file_path)
+            articles.append(article)
+            
+        except Exception as e:
+            logger.error(f"Error loading article {file_path}: {e}")
+    
+    logger.info(f"Loaded {len(articles)} articles")
+    return articles
 
-def process_article(client, article_path):
+def classify_article(article):
     """
-    Process a single article with OpenAI.
+    Process an article with OpenAI to extract structured metadata
     
     Args:
-        client: OpenAI client
-        article_path (Path): Path to the article JSON file
+        article (dict): Article data with raw_text
         
     Returns:
-        dict: Processed article data with metadata or None if failed
+        dict: Processed article with metadata or None if error
     """
-    try:
-        # Load the article
-        with open(article_path, 'r', encoding='utf-8') as f:
-            article = json.load(f)
-        
-        # Skip if the article is very short (likely not a real article)
-        if len(article.get("raw_text", "")) < 50:
-            return None
-        
-        # Prepare the prompt
-        prompt = f"""
+    # Direct API call using httpx
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
+    }
+    
+    # Prepare the prompt
+    prompt = f"""
 You are an expert in processing old newspaper articles. Given the raw OCR text of an article, extract structured metadata.
 
 Return a JSON object with the following keys:
@@ -106,184 +107,174 @@ Return a JSON object with the following keys:
 
 Example input:
 ---
-{article["raw_text"]}
+{article["raw_text"][:500]}... (truncated)
 ---
 """
-        
-        # Call OpenAI API with retries
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    response_format={"type": "json_object"}
-                )
-                
-                # Extract and parse the JSON response
-                try:
-                    completion_text = response.choices[0].message.content
-                    metadata = json.loads(completion_text)
-                    
-                    # Validate section value
-                    if "section" in metadata and metadata["section"] not in VALID_SECTIONS:
-                        metadata["section"] = "unknown"
-                    
-                    # Ensure tags is an array
-                    if "tags" not in metadata or not isinstance(metadata["tags"], list):
-                        metadata["tags"] = []
-                    
-                    # Merge with original metadata
-                    result = {
-                        **metadata,
-                        "timestamp": article.get("timestamp", ""),
-                        "publication": article.get("publication", ""),
-                        "source_issue": article.get("source_issue", ""),
-                        "source_url": article.get("source_url", "")
-                    }
-                    
-                    return result
-                
-                except json.JSONDecodeError:
-                    print(f"Error: Could not decode JSON from OpenAI response for {article_path.name}")
-                    if attempt < MAX_RETRIES - 1:
-                        time.sleep(RETRY_DELAY)
-                    else:
-                        return None
-            
-            except (openai.RateLimitError, openai.APIError) as e:
-                print(f"OpenAI API error: {str(e)}")
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAY * (attempt + 1)  # Exponential backoff
-                    print(f"Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                else:
-                    print(f"Failed to process {article_path.name} after {MAX_RETRIES} attempts")
-                    return None
     
-    except Exception as e:
-        print(f"Error processing {article_path.name}: {str(e)}")
-        return None
-
-def save_classified_article(article_data, original_filename):
-    """
-    Save the classified article data to a JSON file.
-    
-    Args:
-        article_data (dict): Processed article data
-        original_filename (str): Original filename
-        
-    Returns:
-        Path: Path to the saved file
-    """
-    # Create the output filename
-    section = article_data.get("section", "unknown")
-    
-    # Extract the date part and slug
-    parts = original_filename.stem.split("--", 1)
-    date_str = parts[0]
-    
-    if len(parts) > 1:
-        slug = parts[1]
-    else:
-        slug = "article"
-    
-    # Create a new filename with section
-    new_filename = f"{date_str}--{section}--{slug}.json"
-    output_path = CLASSIFIED_DIR / new_filename
-    
-    # Save the file
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(article_data, f, indent=2, ensure_ascii=False)
-    
-    return output_path
-
-def filter_articles(articles, section_filter):
-    """
-    Filter articles by section.
-    
-    Args:
-        articles (list): List of processed articles
-        section_filter (str): Section to filter by
-        
-    Returns:
-        list: Filtered list of articles
-    """
-    if not section_filter or section_filter.lower() == "all":
-        return articles
-    
-    return [article for article in articles if article.get("section", "unknown").lower() == section_filter.lower()]
-
-def main():
-    """Main function."""
-    parser = argparse.ArgumentParser(description="Classify newspaper articles using OpenAI")
-    parser.add_argument("date", nargs="?", help="Date in YYYY-MM-DD format (optional)")
-    parser.add_argument("--filter", help="Filter by section type (news, ad, editorial, classified)")
-    args = parser.parse_args()
-    
-    ensure_directories()
-    client = setup_openai()
-    
-    # Load article files
-    article_files = load_article_files(args.date)
-    total_files = len(article_files)
-    
-    if total_files == 0:
-        print(f"No articles found{' for date ' + args.date if args.date else ''}")
-        return
-    
-    print(f"Found {total_files} articles{' for date ' + args.date if args.date else ''}")
-    
-    # Process articles
-    results = []
-    failures = 0
-    section_counter = Counter()
-    
-    print("Processing articles...")
-    for file_path in tqdm(article_files, total=total_files):
-        result = process_article(client, file_path)
-        
-        if result:
-            results.append(result)
-            section_counter[result.get("section", "unknown")] += 1
-            
-            # Save the classified article
-            save_classified_article(result, file_path)
-        else:
-            failures += 1
-    
-    # Filter results if needed
-    if args.filter:
-        filtered_results = filter_articles(results, args.filter)
-        print(f"\nFiltered to {len(filtered_results)} {args.filter} articles")
-    
-    # Print report
-    print("\n----- Classification Report -----")
-    print(f"Total articles processed: {total_files}")
-    print(f"Successfully classified: {len(results)}")
-    print(f"Failed: {failures}")
-    print("\nBreakdown by section:")
-    for section, count in section_counter.most_common():
-        print(f"  - {section}: {count} ({count/len(results)*100:.1f}%)")
-    
-    # Save report
-    report = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "total_processed": total_files,
-        "successful": len(results),
-        "failed": failures,
-        "sections": {section: count for section, count in section_counter.items()}
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"}
     }
     
-    report_date = args.date or "all"
-    report_file = CLASSIFIED_DIR / f"report-{report_date}.json"
-    with open(report_file, 'w', encoding='utf-8') as f:
-        json.dump(report, f, indent=2)
+    try:
+        # Make the API call directly with httpx
+        response = httpx.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=60.0
+        )
+        
+        # Check the response
+        if response.status_code != 200:
+            logger.error(f"API error: {response.status_code}, {response.text}")
+            return None
+        
+        # Parse the response
+        response_data = response.json()
+        completion_text = response_data["choices"][0]["message"]["content"]
+        
+        # Parse the JSON response
+        metadata = json.loads(completion_text)
+        
+        # Merge with original metadata
+        result = {
+            **metadata,
+            "timestamp": article.get("timestamp", ""),
+            "publication": article.get("publication", DEFAULT_PUBLICATION),
+            "source_issue": article.get("source_issue", ""),
+            "source_url": article.get("source_url", "")
+        }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error classifying article: {e}")
+        return None
+
+def process_articles(articles, output_dir, section_filter=None):
+    """
+    Process a list of articles and save the results
     
-    print(f"\nReport saved to {report_file}")
+    Args:
+        articles (list): List of article dictionaries
+        output_dir (Path): Directory to save processed articles
+        section_filter (str): Optional section type to filter by
+        
+    Returns:
+        tuple: (processed_count, section_counts)
+    """
+    processed_count = 0
+    section_counts = {}
+    errors = 0
+    
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Process each article
+    for article in tqdm(articles, desc="Classifying articles"):
+        # Get the original file name
+        original_path = Path(article['file_path'])
+        file_name = original_path.name
+        
+        # Process the article
+        result = classify_article(article)
+        
+        if result is None:
+            errors += 1
+            continue
+        
+        # Track section counts
+        section = result.get('section', 'unknown')
+        section_counts[section] = section_counts.get(section, 0) + 1
+        
+        # Skip if doesn't match section filter
+        if section_filter and section != section_filter:
+            continue
+            
+        # Save the result
+        output_path = output_dir / file_name
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+            
+        processed_count += 1
+        
+    if errors > 0:
+        logger.warning(f"{errors} articles failed to process")
+            
+    return processed_count, section_counts
+
+def save_report(date, processed_count, section_counts, output_dir):
+    """Save a processing report"""
+    report = {
+        "date": date,
+        "processed_count": processed_count,
+        "section_counts": section_counts,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # Save report to output directory
+    report_path = output_dir / f"report-{date}.json"
+    with open(report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2)
+        
+    logger.info(f"Report saved to {report_path}")
+    
+    # Also save to parent directory
+    parent_report_path = output_dir.parent / f"report-{date}.json"
+    with open(parent_report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2)
+
+def main():
+    """Main function to run the script"""
+    parser = argparse.ArgumentParser(description='Classify articles using OpenAI')
+    parser.add_argument('date', help='Date in YYYY-MM-DD format')
+    parser.add_argument('--filter', help='Filter by section type (news, ad, editorial, etc.)')
+    args = parser.parse_args()
+    
+    if not API_KEY:
+        logger.error("OPENAI_API_KEY not set in environment variables")
+        sys.exit(1)
+    
+    # Set up paths
+    date = args.date
+    section_filter = args.filter
+    
+    articles_dir = Path(f"output/articles")
+    output_dir = Path(f"output/classified")
+    
+    # Load and process articles
+    articles = load_articles_from_directory(articles_dir, date_filter=date)
+    
+    if not articles:
+        logger.error(f"No articles found for date {date}")
+        sys.exit(1)
+    
+    logger.info(f"Processing {len(articles)} articles from {date}")
+    
+    # Process the articles
+    processed_count, section_counts = process_articles(
+        articles, 
+        output_dir, 
+        section_filter=section_filter
+    )
+    
+    # Display results
+    logger.info(f"Processed {processed_count} articles")
+    
+    for section, count in section_counts.items():
+        logger.info(f"  {section}: {count} articles")
+    
+    if section_filter:
+        logger.info(f"Filtered to {section_filter} articles only")
+    
+    # Save report
+    save_report(date, processed_count, section_counts, output_dir)
 
 if __name__ == "__main__":
     main() 
