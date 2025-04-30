@@ -51,7 +51,7 @@ class TestMigrateAndSanitize(unittest.TestCase):
         self.assertEqual(clean_text, "This is a test with\n\nexcessive breaks and spacing.")
     
     @patch('migrate_and_sanitize.SOURCE_DIR')
-    @patch('migrate_and_sanitize.TARGET_BASE_DIR')
+    @patch('migrate_and_sanitize.TARGET_PROJECT_ROOT')
     def test_create_directory_structure(self, mock_target, mock_source):
         """Test the creation of the nested directory structure."""
         # Set up the mock paths
@@ -63,7 +63,7 @@ class TestMigrateAndSanitize(unittest.TestCase):
             mock_makedirs.assert_called_once()
     
     @patch('migrate_and_sanitize.SOURCE_DIR')
-    @patch('migrate_and_sanitize.TARGET_BASE_DIR')
+    @patch('migrate_and_sanitize.TARGET_PROJECT_ROOT')
     def test_process_files(self, mock_target, mock_source):
         """Test the processing of JSON files with mocked paths."""
         # Set mock values for directories
@@ -72,7 +72,7 @@ class TestMigrateAndSanitize(unittest.TestCase):
         
         # Patch the directory functions to use our test structure
         with patch('migrate_and_sanitize.SOURCE_DIR', self.source_dir), \
-             patch('migrate_and_sanitize.TARGET_BASE_DIR', self.test_dir), \
+             patch('migrate_and_sanitize.TARGET_PROJECT_ROOT', self.test_dir), \
              patch('migrate_and_sanitize.create_directory_structure') as mock_create_dir, \
              patch('migrate_and_sanitize.sanitize_body_text', return_value="Sanitized text"):
             

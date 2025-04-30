@@ -36,12 +36,12 @@ def check_environment():
     
     # Check if paths exist
     required_paths = [
-        "storydredge/output",
-        "storydredge/output/classified",
-        "storydredge/output/hsa-ready",
-        "storydredge/output/rejected",
-        "storydredge/archive/raw",
-        "storydredge/archive/processed"
+        "output",
+        "output/classified",
+        "output/hsa-ready",
+        "output/rejected",
+        "archive/raw",
+        "archive/processed"
     ]
     
     missing_paths = []

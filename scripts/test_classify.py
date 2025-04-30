@@ -28,8 +28,9 @@ def setup_openai():
         print("Error: OPENAI_API_KEY is not set in .env file")
         sys.exit(1)
     
-    openai.api_key = API_KEY
-    return openai.OpenAI(api_key=API_KEY)
+    return openai.OpenAI(
+        api_key=API_KEY
+    )
 
 def process_article(client, article_path):
     """

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fetch_issue.py - Downloads and extracts OCR text from archive.org
+fetch_issue.py - Downloads and extracts OCR from archive.org
 
 Usage:
     python fetch_issue.py <archive_id>
@@ -13,8 +13,8 @@ import os
 import sys
 import json
 import requests
+import datetime
 from pathlib import Path
-from datetime import datetime
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -22,9 +22,10 @@ from tqdm import tqdm
 load_dotenv()
 
 # Project paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_DIR = BASE_DIR / "archive" / "raw"
-DATA_DIR = BASE_DIR / "data"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ARCHIVE_DIR = PROJECT_ROOT / "archive"
+RAW_DIR = ARCHIVE_DIR / "raw"
+DATA_DIR = PROJECT_ROOT / "data"
 INDEX_FILE = DATA_DIR / "index.json"
 
 def ensure_directories():
@@ -51,7 +52,7 @@ def download_ocr_text(archive_id):
         day = parts[-1]
         date_str = f"{year}-{month}-{day}"
     except IndexError:
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
         print(f"Warning: Could not extract date from archive_id, using today's date: {date_str}")
     
     # Construct download URL

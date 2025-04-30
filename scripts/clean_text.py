@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-clean_text.py - Cleans and normalizes OCR text from newspaper issues
+clean_text.py - Cleans and normalizes raw OCR text
 
 Usage:
     python clean_text.py <date>
@@ -11,6 +11,7 @@ Example:
 
 import re
 import sys
+import os
 import json
 from pathlib import Path
 from dotenv import load_dotenv
@@ -19,10 +20,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Project paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_DIR = BASE_DIR / "archive" / "raw"
-PROCESSED_DIR = BASE_DIR / "archive" / "processed"
-DATA_DIR = BASE_DIR / "data"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ARCHIVE_DIR = PROJECT_ROOT / "archive"
+RAW_DIR = ARCHIVE_DIR / "raw"
+PROCESSED_DIR = ARCHIVE_DIR / "processed"
+DATA_DIR = PROJECT_ROOT / "data"
 INDEX_FILE = DATA_DIR / "index.json"
 
 def ensure_directories():

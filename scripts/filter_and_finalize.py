@@ -5,9 +5,9 @@ import glob
 from collections import Counter
 
 # Constants
-CLASSIFIED_DIR = "storydredge/output/classified"
-HSA_READY_DIR = "storydredge/output/hsa-ready"
-REJECTED_DIR = "storydredge/output/rejected"
+CLASSIFIED_DIR = "output/classified"
+HSA_READY_DIR = "output/hsa-ready"
+REJECTED_DIR = "output/rejected"
 
 # Filtering thresholds
 MIN_BODY_LENGTH = 150
@@ -163,7 +163,7 @@ def process_issue(year, month, day):
 
 def update_issue_index(year, month, day, results):
     """Update the issue's index.json with statistics."""
-    index_dir = os.path.join("storydredge/output")
+    index_dir = os.path.join("output")
     index_path = os.path.join(index_dir, "index.json")
     
     # Create or load existing index

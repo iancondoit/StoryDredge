@@ -1,17 +1,57 @@
+#!/usr/bin/env python3
+"""
+migrate_and_sanitize.py - Migrate classified articles to date-based directory structure and sanitize content
+
+Usage:
+    python migrate_and_sanitize.py [--date=<YYYY-MM-DD>]
+    
+Example:
+    python migrate_and_sanitize.py
+    python migrate_and_sanitize.py --date=1977-08-14
+"""
+
 import os
+import sys
 import json
+import logging
+import argparse
 import re
-import shutil
+from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+import shutil
 import random
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger('migrate')
+
+# Load environment variables
+load_dotenv()
+
+# Project paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "output"
+CLASSIFIED_DIR = OUTPUT_DIR / "classified"
+
 # Constants
-SOURCE_DIR = "storydredge/output/classified"
-TARGET_BASE_DIR = "storydredge/output/classified"
+SOURCE_DIR = CLASSIFIED_DIR
+TARGET_PROJECT_ROOT = CLASSIFIED_DIR
+
+def ensure_directories(date_str=None):
+    """Ensure necessary directories exist."""
+    if date_str:
+        (CLASSIFIED_DIR / date_str).mkdir(parents=True, exist_ok=True)
+    else:
+        CLASSIFIED_DIR.mkdir(parents=True, exist_ok=True)
 
 def create_directory_structure(year, month, day):
     """Create the nested directory structure if it doesn't exist."""
-    target_dir = os.path.join(TARGET_BASE_DIR, year, month, day)
+    target_dir = os.path.join(TARGET_PROJECT_ROOT, year, month, day)
     os.makedirs(target_dir, exist_ok=True)
     return target_dir
 

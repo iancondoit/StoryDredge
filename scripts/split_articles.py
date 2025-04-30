@@ -23,15 +23,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Project paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-PROCESSED_DIR = BASE_DIR / "archive" / "processed"
-OUTPUT_DIR = BASE_DIR / "output" / "articles"
-DATA_DIR = BASE_DIR / "data"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ARCHIVE_DIR = PROJECT_ROOT / "archive"
+PROCESSED_DIR = ARCHIVE_DIR / "processed"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+ARTICLES_DIR = OUTPUT_DIR / "articles"
+DATA_DIR = PROJECT_ROOT / "data"
 INDEX_FILE = DATA_DIR / "index.json"
 
 def ensure_directories():
     """Ensure necessary directories exist."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_cleaned_text(date_str):
     """
@@ -176,7 +178,7 @@ def save_articles(articles, date_str):
         
         # Save the article
         filename = f"{date_str}--{title_slug}.json"
-        output_path = OUTPUT_DIR / filename
+        output_path = ARTICLES_DIR / filename
         
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(article_data, f, indent=2, ensure_ascii=False)
@@ -252,7 +254,7 @@ def main():
     # Update index
     update_index(date_str, saved_files)
     
-    print(f"Successfully saved {len(saved_files)} articles to: {OUTPUT_DIR}")
+    print(f"Successfully saved {len(saved_files)} articles to: {ARTICLES_DIR}")
     # Print some sample headlines
     if articles:
         print("\nSample headlines:")
