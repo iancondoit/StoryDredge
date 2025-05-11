@@ -1,123 +1,133 @@
-# StoryDredge
+# StoryDredge (Redesigned)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/storydredge)
+A streamlined pipeline for processing historical newspaper OCR using local LLMs.
 
-StoryDredge is a high-performance system for processing historical newspaper archives from Archive.org. It extracts, filters, and classifies newspaper articles using a combination of rule-based identification and AI-powered content analysis.
+This project processes newspaper issues from archive.org and extracts structured news articles for 
+integration with the Human Story Atlas (HSA).
 
-## Project Structure
+## Project Overview
+
+StoryDredge processes OCR text from historical newspaper archives and extracts individual news articles, classifies them, and formats them for integration with the Human Story Atlas system. The redesigned pipeline uses a modular approach with clearly defined components and local LLM processing for improved efficiency and scalability.
+
+### Pipeline Flow
+
+1. **Fetching**: Download and cache newspaper OCR text from archive.org
+2. **Cleaning**: Normalize and clean OCR text, fixing common OCR errors
+3. **Splitting**: Identify and extract individual articles from the cleaned OCR
+4. **Classification**: Use local Llama model to classify articles and extract metadata
+5. **Formatting**: Convert classified articles to HSA-ready JSON format
+
+## Directory Structure
 
 ```
 storydredge/
-├── archive/                # Archive.org downloads
-│   ├── raw/                # Raw OCR files
-│   └── processed/          # Cleaned OCR files
-├── data/                   # Configuration files
-├── output/                 # All output files
-│   ├── articles/           # Initial article JSONs
-│   ├── classified/         # Articles with metadata
-│   ├── news_candidates/    # High-confidence news articles
-│   ├── ads/                # Advertisement articles
-│   └── rejected/           # Failed articles
-├── cache/                  # Cache for API responses
-└── scripts/                # Processing scripts
+├── src/                  # Core functionality modules
+│   ├── fetcher/          # Archive.org downloading & caching
+│   ├── cleaner/          # OCR text cleaning 
+│   ├── splitter/         # Article splitting algorithms
+│   ├── classifier/       # Local Llama-based classification
+│   ├── formatter/        # HSA-ready output formatting
+│   └── utils/            # Shared utilities
+├── pipeline/             # Pipeline orchestration
+├── models/               # Local model storage
+├── config/               # Configuration files
+├── tests/                # Unit and integration tests
+├── data/                 # Sample data and metadata
+├── output/               # Processed output files
+│   └── hsa-ready/        # HSA-ready JSON output (organized by date)
+└── archive/              # Legacy codebase (archived, do not modify)
 ```
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/storydredge.git
-cd storydredge
-```
+# Option 1: Automated setup (recommended)
+./dev-setup.sh
 
-2. Create a virtual environment and install dependencies:
-```bash
+# Option 2: Manual setup
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install Ollama for local LLM support
+# See https://ollama.ai/download for platform-specific instructions
 ```
 
-3. Set up your environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your OpenAI API key and other settings
-```
+The `dev-setup.sh` script will:
+- Check Python version
+- Create and activate virtual environment
+- Install dependencies
+- Set up the required directory structure
+- Configure git hooks for code quality
 
-## Optimized Workflow
-
-StoryDredge uses a multi-stage pipeline to efficiently process historical newspapers:
-
-1. **Extract Articles**: Split newspaper pages into individual articles
-2. **Pre-filter**: Aggressively identify high-confidence news articles using pattern matching
-3. **Batch Classification**: Process articles in batches with OpenAI to extract metadata
-4. **Structured Output**: Save classified articles with consistent metadata format
-
-### Key Optimizations
-
-- **High-Confidence News Filtering**: Reduces articles needing AI processing by ~98%
-- **Batch Processing**: Processes multiple articles in a single API call
-- **Parallel Execution**: Handles multiple issues concurrently for faster throughput
-- **Response Caching**: Caches API responses to avoid redundant calls
-- **Multi-Issue Processing**: Processes entire batches of newspaper issues in a single run
-
-## Usage
-
-### Basic Usage
-
-Process a single newspaper issue:
+## Using the Pipeline
 
 ```bash
-python scripts/process_high_confidence.py --date 1977-08-14
+# Process a single newspaper issue
+python pipeline/main.py --issue <archive_id>
+
+# Process multiple issues from a JSON file
+python pipeline/main.py --issues-file <issues_file.json>
+
+# Process issues in parallel (adjust number based on your system)
+python pipeline/main.py --issues-file <issues_file.json> --parallel 4
 ```
 
-### Advanced Usage
+## Testing
 
-Process multiple issues with custom settings:
+The project follows test-driven development principles with comprehensive test coverage:
 
 ```bash
-# Process a list of dates
-python scripts/process_high_confidence.py --dates 1977-08-14 1977-08-15 1977-08-16 --batch-size=15 --max-workers=4
+# Run all tests
+./run_tests.py
 
-# Process dates from a file
-python scripts/process_high_confidence.py --date-file dates.txt --parallel-issues=5 --max-articles=50
+# Run specific test modules
+./run_tests.py tests/test_fetcher/
+./run_tests.py tests/test_cleaner/test_ocr_cleaner.py
+
+# Run with coverage
+./run_tests.py --cov=src
 ```
 
-### Pipeline Components
+## Integration with Human Story Atlas
 
-Individual scripts can be run separately:
+The output of this pipeline is structured JSON files that can be directly imported into the Human Story Atlas system. The output follows the specified format:
 
-```bash
-# Extract high-confidence news articles
-python scripts/prefilter_news.py 1977-08-14
-
-# Classify pre-filtered articles
-python scripts/classify_articles.py 1977-08-14 --file-list=output/high_confidence_news_1977-08-14.txt
+```json
+{
+  "headline": "Story Title or Headline",
+  "body": "Full text content of the story...",
+  "tags": ["tag1", "tag2", "tag3"],
+  "section": "news",
+  "timestamp": "YYYY-MM-DDTHH:MM:SS.000Z",
+  "publication": "Publication Source Name",
+  "source_issue": "Original source issue identifier",
+  "source_url": "URL or reference to original source",
+  "byline": "Author name (if available)",
+  "dateline": "Location and date information (if available)"
+}
 ```
 
-## Performance
+Output files are organized by date in the `output/hsa-ready/YYYY/MM/DD/` directory structure.
 
-The optimized workflow dramatically improves processing efficiency:
+## Legacy Codebase (Archive)
 
-- **Article Reduction**: From ~1800 to ~30-40 articles per issue (98% reduction)
-- **API Calls**: ~3-4 batch calls per issue vs. 180+ individual calls
-- **Processing Time**: ~90 seconds per issue vs. 15-20 minutes
-- **Cost**: ~$0.07 per issue vs. $3-5 per issue
+**IMPORTANT**: The `archive/` directory contains the legacy codebase that has been archived for reference only. Do not modify or extend the code in this directory. All new development should use the modular architecture in the `src/` directory.
 
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| OPENAI_API_KEY | Your OpenAI API key | (required) |
-| OPENAI_RATE_LIMIT | Maximum API requests per minute | 20 |
-| DEFAULT_PUBLICATION | Default publication name | San Antonio Express-News |
-| USE_API_CACHE | Enable API response caching | true |
-| API_CACHE_DIR | Directory for cached responses | cache/api_responses |
-| CACHE_TTL_DAYS | Cache expiration in days | 30 |
+The legacy codebase had several limitations that motivated the redesign:
+- Complex, hard-to-maintain pipeline
+- Slow processing due to API-based classification
+- Limited article extraction
+- Insufficient test coverage
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 
+When contributing to this project, please follow these guidelines:
+1. Follow the modular architecture
+2. Write tests for new functionality
+3. Use the existing utilities in `src/utils/`
+4. Maintain compatibility with the HSA output format
+5. Document your changes

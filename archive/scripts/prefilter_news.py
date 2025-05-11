@@ -40,6 +40,7 @@ NEWS_DIR = OUTPUT_DIR / "news_candidates"
 def ensure_directories():
     """Ensure necessary directories exist."""
     NEWS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_articles(date_str):
     """
@@ -51,7 +52,11 @@ def load_articles(date_str):
     Returns:
         list: List of article file paths
     """
-    article_files = list(ARTICLES_DIR.glob(f"{date_str}--*.json"))
+    # Try different filename patterns
+    article_files = list(ARTICLES_DIR.glob(f"{date_str}-*.json"))
+    if not article_files:
+        article_files = list(ARTICLES_DIR.glob(f"{date_str}--*.json"))
+    
     logger.info(f"Found {len(article_files)} article files for {date_str}")
     return article_files
 
@@ -87,6 +92,10 @@ def is_likely_news(article_data):
     """
     text = article_data.get("raw_text", "")
     title = article_data.get("title", "")
+    
+    # Ensure we have text to analyze
+    if not text or len(text.strip()) < 50:
+        return False, "Text missing or too short"
     
     # Too short to be a news article
     if len(text) < 500:
@@ -243,6 +252,11 @@ def process_articles(article_files, max_articles=None):
     news_files = []
     other_files = []
     
+    # Skip processing if no articles
+    if not article_files:
+        logger.warning("No article files found to process")
+        return news_count, other_count, news_files, other_files
+    
     for file_path in tqdm(article_files, desc="Finding news articles"):
         if max_articles and news_count >= max_articles:
             break
@@ -253,23 +267,30 @@ def process_articles(article_files, max_articles=None):
                 article_data = json.load(f)
         except Exception as e:
             logger.error(f"Error loading {file_path}: {e}")
+            other_count += 1  # Count as non-news
+            other_files.append(file_path)
             continue
         
         # Check if it's likely news
-        is_news, reason = is_likely_news(article_data)
-        
-        if is_news:
-            news_count += 1
-            news_files.append(file_path)
+        try:
+            is_news, reason = is_likely_news(article_data)
             
-            # Save to news directory with metadata
-            article_data["detected_news"] = True
-            article_data["news_detection_reason"] = reason
-            news_output_path = NEWS_DIR / file_path.name
-            
-            with open(news_output_path, 'w', encoding='utf-8') as f:
-                json.dump(article_data, f, indent=2)
-        else:
+            if is_news:
+                news_count += 1
+                news_files.append(file_path)
+                
+                # Save to news directory with metadata
+                article_data["detected_news"] = True
+                article_data["news_detection_reason"] = reason
+                news_output_path = NEWS_DIR / file_path.name
+                
+                with open(news_output_path, 'w', encoding='utf-8') as f:
+                    json.dump(article_data, f, indent=2)
+            else:
+                other_count += 1
+                other_files.append(file_path)
+        except Exception as e:
+            logger.error(f"Error processing article {file_path}: {str(e)}")
             other_count += 1
             other_files.append(file_path)
     
@@ -285,12 +306,20 @@ def save_report(date_str, news_count, other_count, news_files):
         other_count (int): Number of other articles
         news_files (list): List of news article file paths
     """
+    total_count = news_count + other_count
+    
+    # Calculate percentage safely (avoiding division by zero)
+    if total_count > 0:
+        news_percentage = round((news_count / total_count) * 100, 2)
+    else:
+        news_percentage = 0.0
+    
     report = {
         "date": date_str,
-        "total_articles": news_count + other_count,
+        "total_articles": total_count,
         "news_articles": news_count,
         "other_articles": other_count,
-        "news_percentage": round((news_count / (news_count + other_count)) * 100, 2) if (news_count + other_count) > 0 else 0,
+        "news_percentage": news_percentage,
         "news_files": [str(f) for f in news_files]
     }
     
@@ -300,38 +329,78 @@ def save_report(date_str, news_count, other_count, news_files):
         
     logger.info(f"Report saved to {report_path}")
 
-def main():
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Find high-confidence news articles')
-    parser.add_argument('date', help='Date to process (YYYY-MM-DD)')
-    parser.add_argument('--max-articles', type=int, help='Maximum number of news articles to identify')
-    args = parser.parse_args()
+def create_news_file_list(date_str, news_files):
+    """
+    Create a file listing all the news files for next stage processing.
     
-    date_str = args.date
-    max_articles = args.max_articles
-    
-    ensure_directories()
-    
-    # Load and process articles
-    article_files = load_articles(date_str)
-    news_count, other_count, news_files, other_files = process_articles(article_files, max_articles)
-    
-    # Save the report
-    save_report(date_str, news_count, other_count, news_files)
-    
-    # Print summary
-    logger.info(f"Processed {news_count + other_count} articles")
-    logger.info(f"Identified {news_count} news articles ({round((news_count / (news_count + other_count)) * 100, 2)}%)")
-    logger.info(f"Excluded {other_count} non-news articles")
-    
-    # Create a file list for the classification step
-    news_list_path = OUTPUT_DIR / f"high_confidence_news_{date_str}.txt"
+    Args:
+        date_str (str): Date string in YYYY-MM-DD format
+        news_files (list): List of news article file paths
+        
+    Returns:
+        Path: Path to the created file list
+    """
+    news_list_path = OUTPUT_DIR / f"news_files_{date_str}.txt"
     with open(news_list_path, 'w', encoding='utf-8') as f:
         for file_path in news_files:
             f.write(f"{file_path}\n")
     
-    logger.info(f"News file list saved to {news_list_path}")
-    logger.info(f"Next step: Run classify_articles.py with --file-list {news_list_path}")
+    return news_list_path
+
+def main():
+    try:
+        # Parse command-line arguments
+        parser = argparse.ArgumentParser(description='Find high-confidence news articles')
+        parser.add_argument('date', help='Date to process (YYYY-MM-DD)')
+        parser.add_argument('--max-articles', type=int, help='Maximum number of news articles to identify')
+        args = parser.parse_args()
+        
+        date_str = args.date
+        max_articles = args.max_articles
+        
+        ensure_directories()
+        
+        # Load and process articles
+        article_files = load_articles(date_str)
+        
+        # Handle empty article list gracefully
+        if not article_files:
+            logger.warning(f"No article files found for {date_str}")
+            # Still create report and empty news file list
+            save_report(date_str, 0, 0, [])
+            news_list_path = create_news_file_list(date_str, [])
+            logger.info(f"Empty news file list saved to {news_list_path}")
+            logger.info("Processed 0 articles")
+            return 0
+        
+        # Process the articles we found
+        news_count, other_count, news_files, other_files = process_articles(article_files, max_articles)
+        
+        # Save the report
+        save_report(date_str, news_count, other_count, news_files)
+        
+        # Print summary
+        total_count = news_count + other_count
+        logger.info(f"Processed {total_count} articles")
+        
+        # Handle percentage calculation safely
+        if total_count > 0:
+            news_percentage = round((news_count / total_count) * 100, 2)
+            logger.info(f"Identified {news_count} news articles ({news_percentage}%)")
+        else:
+            logger.info(f"Identified {news_count} news articles (0.0%)")
+        
+        logger.info(f"Excluded {other_count} non-news articles")
+        
+        # Create a file list for the classification step
+        news_list_path = create_news_file_list(date_str, news_files)
+        logger.info(f"News file list saved to {news_list_path}")
+        logger.info(f"Next step: Run classify_articles.py with --file-list={news_list_path}")
+        
+        return 0
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return 1
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

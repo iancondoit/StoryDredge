@@ -14,6 +14,27 @@ MIN_BODY_LENGTH = 150
 MIN_SENTENCES = 2
 MAX_SYMBOL_RATIO = 0.25
 
+# Additional ad-specific keywords and patterns
+AD_KEYWORDS = [
+    "sale", "discount", "special", "offer", "price", "buy", "call", "contact",
+    "financing", "money", "cash", "credit", "cheap", "affordable", "deal",
+    "service", "appointment", "opening", "rent", "lease", "property", "realty",
+    "bedroom", "bath", "sq ft", "house", "home", "apartment", "condo", "office",
+    "shop", "store", "mall", "phone", "wanted", "hiring", "position", "job",
+    "employment", "salary", "wage", "benefit", "insurance", "opportunity", "resume",
+    "interview", "apply", "application", "opening", "free", "low price", "clearance",
+    "retail", "wholesale", "dealer", "dealership", "market"
+]
+
+# Compile the keywords into a case-insensitive regex pattern
+AD_PATTERN = re.compile(r'(?i)\b(' + '|'.join(re.escape(kw) for kw in AD_KEYWORDS) + r')\b')
+
+# Patterns for phone numbers, prices, etc.
+PHONE_PATTERN = re.compile(r'(?<!\w)(\d{3}[-.)/ ]?\d{3}[-.)/ ]?\d{4})(?!\w)')
+PRICE_PATTERN = re.compile(r'(?<!\w)\$\s*\d+(?:,\d{3})*(?:\.\d{2})?(?!\w)')
+PERCENTAGE_PATTERN = re.compile(r'(?<!\w)\d+\s*%(?!\w)')
+LOCATION_WITH_NUMBER_PATTERN = re.compile(r'\d+\s+[A-Za-z]+(?:\s+[A-Za-z]+){1,3}(?:\s+[Rr]oad|[Ss]t|[Ss]treet|[Aa]ve|[Aa]venue|[Bb]lvd|[Bb]oulevard|[Ll]n|[Ll]ane|[Dd]r|[Dd]rive|[Cc]t|[Cc]ourt|[Pp]l|[Pp]lace)')
+
 def sanitize_body_text(body):
     """Clean up the article body text."""
     if not body:
@@ -65,6 +86,91 @@ def calculate_symbol_ratio(text):
     
     return len(symbols) / len(words)
 
+def is_likely_ad(article):
+    """Check if article is likely an advertisement using stricter criteria."""
+    # Get article fields
+    headline = article.get("headline", "")
+    body = article.get("body", "")
+    byline = article.get("byline", "")
+    section = article.get("section", "").lower()
+    tags = article.get("tags", [])
+    
+    # Check tags for ad-related words
+    for tag in tags:
+        if any(ad_word in tag.lower() for ad_word in ["ad", "advertisement", "classified", "listing", "shopping"]):
+            return True, "Ad-related tag found"
+    
+    combined_text = f"{headline} {body} {byline}".lower()
+    
+    # Check for a high concentration of AD_KEYWORDS (more than 3 unique ones)
+    ad_matches = set(re.findall(AD_PATTERN, combined_text))
+    if len(ad_matches) >= 3:
+        return True, f"Multiple ad keywords found"
+    
+    # Check for phone numbers (more than 1)
+    phone_matches = re.findall(PHONE_PATTERN, combined_text)
+    if len(phone_matches) > 1:
+        return True, "Multiple phone numbers"
+    
+    # Check for prices (more than 1)
+    price_matches = re.findall(PRICE_PATTERN, combined_text)
+    if len(price_matches) > 1:
+        return True, "Multiple price mentions"
+    
+    # Check for percentages (discounts)
+    percentage_matches = re.findall(PERCENTAGE_PATTERN, combined_text)
+    if len(percentage_matches) > 1:
+        return True, "Multiple percentage mentions (likely discounts)"
+    
+    # Check for business addresses
+    location_matches = re.findall(LOCATION_WITH_NUMBER_PATTERN, combined_text)
+    if location_matches:
+        return True, "Contains business address"
+    
+    # Check for common ad phrases and calls to action
+    ad_phrases = [
+        "call now", "call today", "for appointment", "free estimate",
+        "open house", "open sunday", "call for", "for information",
+        "for details", "buy now", "limited time", "apply today",
+        "walk-in", "come see", "sale ends", "don't miss", "visit us"
+    ]
+    for phrase in ad_phrases:
+        if phrase in combined_text:
+            return True, f"Contains ad phrase"
+    
+    # Check for short paragraphs with bullets or lists (common in ads)
+    lines = body.split('\n')
+    bullet_count = sum(1 for line in lines if line.strip().startswith(('•', '-', '*', '–')))
+    if bullet_count >= 3:
+        return True, "Contains multiple bullet points (likely a list or ad)"
+    
+    # Check for real estate listings
+    real_estate_indicators = [
+        "bedroom", "bath", "sq ft", "square foot", "lot size",
+        "acreage", "open floor plan", "master suite", "garage"
+    ]
+    re_matches = [indicator for indicator in real_estate_indicators if indicator in combined_text]
+    if len(re_matches) >= 2:
+        return True, "Contains multiple real estate listing indicators"
+    
+    # Check for event listings with times and dates
+    event_indicators = [
+        "admission", "tickets", "event", "show", "performance", "concert",
+        "exhibit", "exhibition", "gallery", "matinee", "pm", "am"
+    ]
+    date_pattern = r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2}\b'
+    time_pattern = r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b'
+    
+    event_matches = [indicator for indicator in event_indicators if indicator in combined_text.lower()]
+    has_date = re.search(date_pattern, combined_text.lower())
+    has_time = re.search(time_pattern, combined_text.lower())
+    
+    if len(event_matches) >= 2 and (has_date or has_time):
+        return True, "Appears to be an event listing"
+    
+    # Not detected as an ad
+    return False, None
+
 def should_exclude_article(article):
     """Determine if an article should be excluded based on filtering rules."""
     # Check section type
@@ -92,6 +198,11 @@ def should_exclude_article(article):
     if calculate_symbol_ratio(body) > MAX_SYMBOL_RATIO:
         return True, "High symbol-to-word ratio"
     
+    # Check if it's likely an ad
+    is_ad, reason = is_likely_ad(article)
+    if is_ad:
+        return True, reason
+    
     # If we reached here, the article passes all filters
     return False, None
 
@@ -100,8 +211,19 @@ def create_directory(path):
     os.makedirs(path, exist_ok=True)
 
 def process_issue(year, month, day):
-    """Process all articles for a specific issue date."""
-    source_dir = os.path.join(CLASSIFIED_DIR, year, month, day)
+    """
+    Process a single issue, filtering out non-news content.
+    
+    Args:
+        year (str): Year (YYYY)
+        month (str): Month (MM)
+        day (str): Day (DD)
+        
+    Returns:
+        dict: Results of processing
+    """
+    # Set up paths
+    issue_dir = os.path.join(CLASSIFIED_DIR, year, month, day)
     hsa_ready_dir = os.path.join(HSA_READY_DIR, year, month, day)
     rejected_dir = os.path.join(REJECTED_DIR, year, month, day)
     
@@ -109,18 +231,19 @@ def process_issue(year, month, day):
     create_directory(hsa_ready_dir)
     create_directory(rejected_dir)
     
+    # Find all JSON files in the issue directory
+    files = glob.glob(os.path.join(issue_dir, "*.json"))
+    
+    # Set up results counter
     results = {
-        "total": 0,
+        "total": len(files),
         "usable": 0,
         "rejected": 0,
         "rejection_reasons": Counter()
     }
     
-    # Find all JSON files in the source directory
-    json_files = glob.glob(os.path.join(source_dir, "*.json"))
-    results["total"] = len(json_files)
-    
-    for file_path in json_files:
+    # Process each file
+    for file_path in files:
         filename = os.path.basename(file_path)
         
         try:

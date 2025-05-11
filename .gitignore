@@ -171,4 +171,34 @@ storydredge/output/classified/*
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Development environments
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project-specific
+/output/
+/data/cache/
+/models/*.bin
+.env
+
+# Exception - Keep the directory structure
+!output/.gitkeep
+!data/.gitkeep
+!models/.gitkeep 
