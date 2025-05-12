@@ -337,3 +337,10 @@ classifier = ArticleClassifier(
 ### Extending the Pipeline
 
 The modular architecture allows you to extend the pipeline with custom components. Create a new component that follows the input/output conventions of the existing components and integrate it into the pipeline. 
+
+To execute the test pipeline:
+```bash
+python scripts/run_atlanta_constitution_test.py --prepare --test --run-pipeline
+```
+
+This will prepare a dataset from the Atlanta Constitution, run the tests, and process the issues through the pipeline. 

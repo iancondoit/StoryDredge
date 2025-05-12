@@ -2,9 +2,9 @@
 
 # Logging configuration
 logging:
-  level: "WARNING"
+  level: "INFO"
   log_dir: "logs"
-  console_logging: false
+  console_logging: true
   file_logging: true
   max_log_size_mb: 10
   backup_count: 5
@@ -78,4 +78,6 @@ formatter:
   organize_by_date: true
   output_format: "json"
   include_metadata: true
-  pretty_print: true 
+  pretty_print: true
+  strict_validation: false
+  add_default_values: true 

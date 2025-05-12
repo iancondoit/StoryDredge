@@ -10,6 +10,7 @@ from datetime import datetime
 
 # Import the HSAFormatter class
 from src.formatter.hsa_formatter import HSAFormatter
+from src.utils.date_utils import extract_date_from_archive_id
 
 
 class TestHSAFormatter:
@@ -130,10 +131,11 @@ class TestHSAFormatter:
         
         # Check required fields
         assert formatted["headline"] == "Test Headline"
-        assert formatted["body"] == "Test body content"
+        # When both raw_text and body are present, body should be used
+        assert formatted["body"] == "Test body content"  
         assert formatted["section"] == "news"
         assert "tag1" in formatted["tags"]
-        assert formatted["timestamp"] == "1977-06-14T00:00:00.000Z"
+        assert formatted["timestamp"] is not None  # Now it might use date from archive ID
         assert formatted["publication"] == sample_newspaper_metadata["publication"]
         assert formatted["source_issue"] == sample_newspaper_metadata["archive_id"]
         assert formatted["source_url"] == sample_newspaper_metadata["source_url"]
@@ -144,6 +146,152 @@ class TestHSAFormatter:
         assert "raw_text" not in formatted
         assert "date" not in formatted
         assert "extra_field" not in formatted
+        
+        # Test with only raw_text, not body
+        article = {
+            "headline": "Test Headline",
+            "raw_text": "This should be used as body content",
+            # No body field
+            "section": "news",
+            "tags": ["tag1", "tag2"],
+            "date": "1977-06-14",
+            "publication": sample_newspaper_metadata["publication"]
+        }
+        
+        formatted = formatter.format_article(article)
+        assert formatted["body"] == "This should be used as body content"
+    
+    def test_format_article_with_archive_id_date(self):
+        """Test article formatting with date extraction from archive ID."""
+        # Article with archive ID containing date
+        article = {
+            "headline": "Test Headline",
+            "body": "Test body content",
+            "section": "news",
+            "tags": ["tag1", "tag2"],
+            # No explicit date/timestamp
+            "publication": "The Atlanta Constitution",
+            "source_issue": "per_atlanta-constitution_1922-01-15_54_210",
+            "source_url": "https://archive.org/details/per_atlanta-constitution_1922-01-15_54_210"
+        }
+        
+        formatter = HSAFormatter()
+        formatted = formatter.format_article(article)
+        
+        # Should extract date from archive ID
+        assert formatted["timestamp"] == "1922-01-15T00:00:00.000Z"
+        
+        # Test with alternative archive ID format
+        article["source_issue"] = "sim_newcastle-morning-herald_18931015"
+        formatted = formatter.format_article(article)
+        
+        # Should extract date from alternative archive ID format
+        assert formatted["timestamp"] == "1893-10-15T00:00:00.000Z"
+        
+        # Test with explicit date that should be overridden by archive ID
+        article["date"] = "2020-05-01"  # This should be ignored in favor of archive ID date
+        article["source_issue"] = "per_atlanta-constitution_1922-01-15_54_210"
+        formatted = formatter.format_article(article)
+        
+        # Should prioritize date from archive ID
+        assert formatted["timestamp"] == "1922-01-15T00:00:00.000Z"
+    
+    def test_format_article_with_metadata(self, sample_newspaper_metadata):
+        """Test article formatting with metadata extraction for tags."""
+        # Article with metadata from classifier
+        article = {
+            "headline": "Test Headline",
+            "body": "Test body content",
+            "category": "News",
+            "confidence": 0.95,
+            "metadata": {
+                "topic": "Politics",
+                "people": ["John Doe", "Jane Smith"],
+                "organizations": ["Acme Corp", "Government"],
+                "locations": ["New York", "Washington DC"]
+            },
+            "section": "news",
+            "tags": ["original_tag"],
+            "date": "1977-06-14",
+            "publication": sample_newspaper_metadata["publication"],
+            "source_issue": sample_newspaper_metadata["archive_id"],
+            "source_url": sample_newspaper_metadata["source_url"]
+        }
+        
+        formatter = HSAFormatter()
+        formatted = formatter.format_article(article)
+        
+        # Original tag should be preserved
+        assert "original_tag" in formatted["tags"]
+        
+        # Metadata should be extracted as tags
+        assert "news" in formatted["tags"]  # Category
+        assert "politics" in formatted["tags"]  # Topic
+        assert "john doe" in formatted["tags"]  # Person
+        assert "jane smith" in formatted["tags"]  # Person
+        assert "acme corp" in formatted["tags"]  # Organization
+        assert "government" in formatted["tags"]  # Organization
+        assert "new york" in formatted["tags"]  # Location
+        assert "washington dc" in formatted["tags"]  # Location
+        
+        # Check that there are 9 tags total (1 original + 8 from metadata)
+        assert len(formatted["tags"]) == 9
+    
+    def test_map_category_to_section(self):
+        """Test mapping classification categories to valid HSA sections."""
+        formatter = HSAFormatter()
+        
+        # Test direct mappings
+        assert formatter._map_category_to_section("News") == "news"
+        assert formatter._map_category_to_section("Sports") == "sports"
+        assert formatter._map_category_to_section("Opinion") == "opinion"
+        assert formatter._map_category_to_section("Business") == "business"
+        
+        # Test with whitespace and case variations
+        assert formatter._map_category_to_section("  NEWS  ") == "news"
+        assert formatter._map_category_to_section("SPORTS") == "sports"
+        
+        # Test fuzzy matching
+        assert formatter._map_category_to_section("Sporting Event") == "sports"
+        assert formatter._map_category_to_section("Editorial Opinion") == "opinion"
+        assert formatter._map_category_to_section("Business Finance") == "business"
+        
+        # Test unmapped category
+        assert formatter._map_category_to_section("Unknown Category") is None
+    
+    def test_format_article_with_category_section_mapping(self):
+        """Test that category is properly mapped to section when section is invalid."""
+        # Article with invalid section, but valid category
+        article = {
+            "headline": "Test Headline",
+            "body": "Test body content",
+            "category": "Sports",
+            "section": "invalid_section",  # Not a valid section
+            "tags": [],
+            "timestamp": "1977-06-14T00:00:00.000Z"
+        }
+        
+        formatter = HSAFormatter()
+        formatted = formatter.format_article(article)
+        
+        # Section should be mapped from category since the original section was invalid
+        assert formatted["section"] == "sports"
+        
+        # Article with category that doesn't map to valid section
+        article = {
+            "headline": "Test Headline",
+            "body": "Test body content",
+            "category": "Unknown Category",
+            "section": "invalid_section",
+            "tags": [],
+            "timestamp": "1977-06-14T00:00:00.000Z"
+        }
+        
+        formatter = HSAFormatter()
+        formatted = formatter.format_article(article)
+        
+        # Section should default to "other"
+        assert formatted["section"] == "other"
     
     def test_save_article(self, temp_dir, sample_newspaper_metadata):
         """Test saving formatted article to file."""

@@ -1,0 +1,5 @@
+WashPost-1940-04-15
+SFChronicle-1930-11-01
+NYTimes-1919-02-01
+ChicagoTribune-1925-07-01
+WashPost-1940-05-01

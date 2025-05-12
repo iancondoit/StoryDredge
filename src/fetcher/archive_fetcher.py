@@ -13,7 +13,7 @@ import httpx
 import json
 import re
 from pathlib import Path
-from typing import Dict, Optional, Any, Union, List
+from typing import Dict, Optional, Any, Union, List, Tuple
 import logging
 from datetime import datetime, timedelta
 
@@ -303,6 +303,221 @@ class ArchiveFetcher:
                 logger.error(f"Unexpected error searching archive.org: {e}")
                 return []
 
+    def search_newspaper_collection(self, collection: str, date_range: Optional[Tuple[str, str]] = None, 
+                                  limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Search for newspaper issues from a specific collection with date filtering.
+        
+        Args:
+            collection: The archive.org collection identifier (e.g., "pub_atlanta-constitution")
+            date_range: Optional tuple of (start_date, end_date) in YYYY-MM-DD format
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of archive.org item metadata
+        """
+        # Build query components
+        components = []
+        
+        # Add collection filter
+        components.append(f"collection:({collection})")
+        
+        # Add mediatype filter
+        components.append("mediatype:(texts)")
+        
+        # Build date filter if provided
+        if date_range:
+            start_date, end_date = date_range
+            date_filter = f"date:[{start_date} TO "
+            date_filter += end_date if end_date else "NOW"
+            date_filter += "]"
+            components.append(date_filter)
+        
+        # Join all query components
+        search_query = " AND ".join(components)
+        
+        # Add more fields to the response
+        params = {
+            "q": search_query,
+            "fl[]": "identifier,title,date,mediatype,collection,description",
+            "sort[]": "date asc",
+            "rows": limit,
+            "page": 1,
+            "output": "json"
+        }
+        
+        logger.info(f"Searching archive.org for: {search_query}")
+        
+        search_url = "https://archive.org/advancedsearch.php"
+        retry_count = 0
+        
+        while retry_count <= self.max_retries:
+            try:
+                # Apply rate limiting
+                self.rate_limiter.wait_if_needed()
+                
+                response = self.client.get(search_url, params=params)
+                
+                if response.status_code == 429:  # Too Many Requests
+                    raise RateLimitError("Rate limit exceeded for search")
+                
+                if response.status_code != 200:
+                    error_msg = f"Search failed: HTTP {response.status_code}"
+                    if retry_count < self.max_retries:
+                        logger.warning(f"{error_msg}, retrying...")
+                    else:
+                        logger.error(error_msg)
+                    raise FetchError(error_msg)
+                
+                data = response.json()
+                results = data.get("response", {}).get("docs", [])
+                
+                logger.info(f"Found {len(results)} issues for collection {collection}")
+                return results
+                
+            except (httpx.HTTPError, FetchError, RateLimitError) as e:
+                retry_count += 1
+                
+                if retry_count <= self.max_retries:
+                    delay = self.retry_delay * (self.backoff_factor ** (retry_count - 1))
+                    logger.warning(f"Search attempt {retry_count} failed: {e}. Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"All {self.max_retries} search retry attempts failed for collection {collection}")
+                    return []
+            
+            except Exception as e:
+                logger.error(f"Unexpected error searching collection {collection}: {e}")
+                return []
+    
+    def check_ocr_availability(self, identifier: str) -> bool:
+        """
+        Check if OCR text is available for a specific archive.org identifier.
+        
+        Args:
+            identifier: The archive.org identifier
+            
+        Returns:
+            True if OCR text is available, False otherwise
+        """
+        file_listing_url = f"https://archive.org/metadata/{identifier}/files"
+        
+        try:
+            # Apply rate limiting
+            self.rate_limiter.wait_if_needed()
+            
+            # Get list of files available for this item
+            response = self.client.get(file_listing_url)
+            
+            if response.status_code != 200:
+                logger.warning(f"Failed to get file listing for {identifier}: HTTP {response.status_code}")
+                return False
+            
+            data = response.json()
+            files = data.get("result", [])
+            
+            # Look specifically for _djvu.txt file first (what StoryDredge uses)
+            djvu_filename = f"{identifier}_djvu.txt"
+            for file in files:
+                filename = file.get("name", "")
+                if filename == djvu_filename:
+                    logger.debug(f"Found OCR file for {identifier}")
+                    return True
+            
+            # Fallback to any other OCR or text files
+            for file in files:
+                filename = file.get("name", "")
+                if filename.endswith(".txt") and any(fmt in filename for fmt in ["ocr", "djvu", "text"]):
+                    if not filename.endswith((".xml", ".gz", ".json")):  # Exclude non-text formats
+                        logger.debug(f"Found alternative OCR file for {identifier}: {filename}")
+                        return True
+            
+            logger.info(f"No OCR available for {identifier}")
+            return False
+        
+        except Exception as e:
+            logger.error(f"Error checking OCR availability for {identifier}: {e}")
+            return False
+    
+    def get_newspaper_issues(self, collection: str, date_range: Optional[Tuple[str, str]] = None, 
+                           limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get newspaper issues from a specific collection with OCR availability check.
+        
+        Args:
+            collection: The archive.org collection identifier (e.g., "pub_atlanta-constitution")
+            date_range: Optional tuple of (start_date, end_date) in YYYY-MM-DD format
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of newspaper issues with OCR availability information
+        """
+        # Search for issues in the collection
+        search_results = self.search_newspaper_collection(collection, date_range, limit)
+        
+        if not search_results:
+            logger.warning(f"No issues found for collection {collection}")
+            return []
+        
+        # Check OCR availability for each issue
+        available_issues = []
+        total_issues = len(search_results)
+        
+        logger.info(f"Checking OCR availability for {total_issues} issues...")
+        
+        for i, issue in enumerate(search_results):
+            identifier = issue.get("identifier")
+            
+            # Skip if no identifier
+            if not identifier:
+                continue
+            
+            # Check if OCR is available
+            has_ocr = self.check_ocr_availability(identifier)
+            
+            # Add OCR availability to the issue data
+            issue["has_ocr"] = has_ocr
+            
+            # Only include issues with OCR
+            if has_ocr:
+                available_issues.append(issue)
+                
+            # Log progress
+            if (i + 1) % 10 == 0 or (i + 1) == total_issues:
+                logger.info(f"Checked {i + 1}/{total_issues} issues")
+        
+        available_count = len(available_issues)
+        logger.info(f"Found {available_count}/{total_issues} issues with OCR available in collection {collection}")
+        
+        return available_issues
+    
+    def save_issues_file(self, issues: List[Dict[str, Any]], output_file: Union[str, Path]) -> Path:
+        """
+        Save a list of issues to a JSON file for batch processing.
+        
+        Args:
+            issues: List of issue dictionaries with OCR availability
+            output_file: Path to output JSON file
+            
+        Returns:
+            Path to the saved file
+        """
+        # Create the output file's parent directory if it doesn't exist
+        output_path = Path(output_file)
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        
+        # Extract just the identifiers for the issues file
+        data = {
+            "issues": [issue.get("identifier") for issue in issues if issue.get("has_ocr")]
+        }
+        
+        # Save the issues to a JSON file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        
+        logger.info(f"Saved {len(data['issues'])} issue identifiers to {output_path}")
+        return output_path
+    
     def clear_cache(self, older_than_days: Optional[int] = None) -> int:
         """
         Clear the cache directory.

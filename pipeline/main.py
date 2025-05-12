@@ -8,6 +8,7 @@ This script orchestrates the entire pipeline process:
 3. Split into articles
 4. Classify with local LLM
 5. Format for Human Story Atlas
+6. Organize into HSA-ready folder structure by publication and date
 
 Can process either in sequential mode (BatchProcessor) or parallel mode (ParallelProcessor).
 """
@@ -18,6 +19,7 @@ import json
 import time
 import logging
 import argparse
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -53,6 +55,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="output", help="Directory for output files")
     parser.add_argument("--checkpoint-file", type=str, default="checkpoint.json", help="Checkpoint file for resume capability")
     parser.add_argument("--benchmark", action="store_true", help="Run benchmarks after processing")
+    parser.add_argument("--skip-hsa-migration", action="store_true", help="Skip the HSA migration step")
     args = parser.parse_args()
     
     # Setup logging
@@ -145,6 +148,44 @@ def main():
         except Exception as e:
             logging.error(f"Error running benchmarks: {e}")
     
+    # Run HSA migration step to organize articles by publication and date
+    if not args.skip_hsa_migration:
+        try:
+            logging.info("Running HSA data migration to organize articles by publication and date...")
+            
+            # Use the same output directory as the pipeline
+            source_dir = args.output_dir
+            target_dir = os.path.join(args.output_dir, "hsa-ready")
+            report_path = os.path.join("reports", "hsa_migration.json")
+            
+            # Create reports directory if it doesn't exist
+            Path("reports").mkdir(exist_ok=True)
+            
+            # Run the migration script
+            cmd = [
+                sys.executable,
+                "scripts/migrate_hsa_data.py",
+                "--source", source_dir,
+                "--target", target_dir,
+                "--output", report_path
+            ]
+            
+            logging.info(f"Executing command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                logging.info("HSA migration completed successfully")
+                if result.stdout:
+                    logging.info(f"Migration output: {result.stdout}")
+            else:
+                logging.error(f"HSA migration failed with code {result.returncode}")
+                if result.stderr:
+                    logging.error(f"Migration error: {result.stderr}")
+                if result.stdout:
+                    logging.info(f"Migration output: {result.stdout}")
+        except Exception as e:
+            logging.error(f"Error running HSA migration: {e}")
+
 
 if __name__ == "__main__":
     main()
