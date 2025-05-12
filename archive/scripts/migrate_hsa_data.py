@@ -63,7 +63,7 @@ class HSAMigrator:
         """Convert publication name to a clean format for directory names."""
         # Replace spaces with underscores and remove special characters
         clean_name = re.sub(r'[^\w\s-]', '', publication)
-        clean_name = re.sub(r'\s+', '_', clean_name)
+        clean_name = re.sub(r'\s+', '-', clean_name)
         return clean_name.lower().strip()
         
     def migrate(self):
@@ -82,53 +82,81 @@ class HSAMigrator:
             # Skip hidden directories
             dirs[:] = [d for d in dirs if not d.startswith('.')]
             
-            for file in files:
-                # Skip hidden and non-JSON files
-                if file.startswith('.') or not file.endswith('.json'):
-                    continue
+            # Process all JSON files in any directory that looks like a date-based structure
+            # (we're looking for article_XXXX.json files directly in date directories)
+            root_path = Path(root)
+            
+            # Skip the hsa-ready directory if we're processing from output directory
+            if "hsa-ready" in root and str(self.target_dir) in root:
+                continue
                 
-                # Make sure we're only processing article files in an articles directory
-                if not "articles" in root:
-                    continue
+            # Process JSON files that match our article pattern
+            article_files = [f for f in files if f.endswith('.json') and f.startswith('article_')]
+            
+            if article_files:
+                # This directory contains article files - process them
+                for file in article_files:
+                    # Skip hidden files
+                    if file.startswith('.'):
+                        continue
                     
-                file_path = Path(root) / file
-                self.migrate_file(file_path)
+                    file_path = root_path / file
+                    self.migrate_file(file_path)
                 
         logger.info(f"Migration complete. Migrated {self.stats['migrated_files']} of {self.stats['total_files']} files.")
         return True
         
     def extract_info_from_path(self, file_path):
         """Extract publication and date info from issue path."""
+        # We'll set atlanta-constitution as the publication name
+        publication = "atlanta-constitution"
+        
         # Extract issue ID from path
-        # Example: output/per_atlanta-constitution_1922-01-01_54_203/articles/article_0001.json
+        # Example paths:
+        # output/per_atlanta-constitution_1922-01-01_54_203/articles/article_0001.json
+        # output/atlanta-constitution/1922/01/01/articles/article_0001.json
         parts = file_path.parts
         issue_id = None
         
-        # Find the part that contains the issue ID
-        for part in parts:
+        # Try to find date information in the path
+        for i, part in enumerate(parts):
+            # First check for publication/year/month/day pattern
+            if part == "atlanta-constitution" and i + 3 < len(parts):
+                # Check if the next three parts could be year, month, day
+                if re.match(r'^\d{4}$', parts[i+1]) and re.match(r'^\d{2}$', parts[i+2]) and re.match(r'^\d{2}$', parts[i+3]):
+                    year = parts[i+1]
+                    month = parts[i+2] 
+                    day = parts[i+3]
+                    # Create a consistent issue ID
+                    issue_id = f"per_atlanta-constitution_{year}-{month}-{day}"
+                    return publication, year, month, day, issue_id
+            
+            # Also check for per_ prefix pattern
             if part.startswith("per_"):
                 issue_id = part
-                break
+                # Extract date from issue ID
+                # Example: per_atlanta-constitution_1922-01-01_54_203
+                id_parts = issue_id.split("_")
+                if len(id_parts) >= 3:
+                    date_str = id_parts[2]
+                    match = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_str)
+                    if match:
+                        year, month, day = match.groups()
+                        return publication, year, month, day, issue_id
+                        
+            # Also look for year/month/day directories
+            elif re.match(r'^\d{4}$', part):
+                # Check if this could be a year followed by month and day
+                if i + 2 < len(parts) and re.match(r'^\d{2}$', parts[i+1]) and re.match(r'^\d{2}$', parts[i+2]):
+                    year = part
+                    month = parts[i+1]
+                    day = parts[i+2]
+                    # Create a consistent issue ID
+                    issue_id = f"per_atlanta-constitution_{year}-{month}-{day}"
+                    return publication, year, month, day, issue_id
         
-        if not issue_id:
-            return None, None, None, None, None
-        
-        # Extract publication and date from issue ID
-        # Example: per_atlanta-constitution_1922-01-01_54_203
-        parts = issue_id.split("_")
-        if len(parts) < 3:
-            return None, None, None, None, None
-        
-        publication = parts[1]
-        date_str = parts[2]
-        
-        # Extract year, month, day from date
-        match = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_str)
-        if not match:
-            return publication, None, None, None, issue_id
-        
-        year, month, day = match.groups()
-        return publication, year, month, day, issue_id
+        # If we can't extract date info, return None
+        return None, None, None, None, None
         
     def migrate_file(self, file_path):
         """Migrate a single article file."""
@@ -194,25 +222,49 @@ class HSAMigrator:
             self.stats["skipped_files"] += 1
     
     def convert_to_hsa_format(self, article, publication, year, month, day, issue_id):
-        """Convert article extracted by direct_test to HSA format."""
+        """Convert classified article to HSA format."""
         hsa_article = {}
         
-        # Copy title to headline
-        hsa_article["headline"] = article.get("title", "Untitled")
+        # Copy title/headline
+        hsa_article["headline"] = article.get("title", article.get("headline", "Untitled"))
         
-        # Copy raw_text to body
-        hsa_article["body"] = article.get("raw_text", "")
+        # Copy raw_text/body
+        hsa_article["body"] = article.get("raw_text", article.get("body", ""))
         
-        # Add required fields
-        hsa_article["section"] = "news"  # Default section
-        hsa_article["tags"] = []  # Empty tags array
+        # Get section - use classified category if available, default to news
+        category = article.get("category", "news").lower()
+        hsa_article["section"] = category
+        
+        # Extract tags from metadata if available
+        tags = []
+        if "metadata" in article and article["metadata"]:
+            metadata = article["metadata"]
+            
+            # Add category as a tag
+            if category and category not in tags:
+                tags.append(category)
+                
+            # Add tags from metadata
+            if "tags" in metadata and metadata["tags"]:
+                for tag in metadata["tags"]:
+                    if tag and tag not in tags:
+                        tags.append(tag)
+                        
+            # Add entities as tags (people, organizations, locations)
+            for entity_type in ["people", "organizations", "locations"]:
+                if entity_type in metadata and metadata[entity_type]:
+                    for entity in metadata[entity_type]:
+                        if entity and entity not in tags:
+                            tags.append(entity)
+        
+        hsa_article["tags"] = tags
         
         # Format timestamp
         timestamp = f"{year}-{month}-{day}T00:00:00.000Z"
         hsa_article["timestamp"] = timestamp
         
-        # Set publication info
-        hsa_article["publication"] = f"The Atlanta Constitution"
+        # Set publication info - use just "Atlanta Constitution" without "The"
+        hsa_article["publication"] = "Atlanta Constitution"
         hsa_article["source_issue"] = issue_id
         hsa_article["source_url"] = f"https://archive.org/details/{issue_id}"
         

@@ -79,8 +79,29 @@ def process_ocr_file(ocr_file: Path, issue_id: str) -> bool:
         True if processing successful, False otherwise
     """
     try:
-        # Set up paths
-        output_dir = Path("output") / issue_id
+        # Parse issue_id to create a cleaner directory structure
+        # Example: per_atlanta-constitution_1922-01-01_54_203
+        import re
+        parts = issue_id.split("_")
+        
+        # Default to original approach if we can't parse properly
+        if len(parts) < 3 or not parts[1] or not re.match(r'^\d{4}-\d{2}-\d{2}', parts[2]):
+            logger.warning(f"Could not parse issue_id: {issue_id}, using default structure")
+            output_dir = Path("output/hsa-ready/unknown") / issue_id
+        else:
+            # Extract publication and date
+            publication = parts[1]
+            date_match = re.match(r'(\d{4})-(\d{2})-(\d{2})', parts[2])
+            
+            if date_match:
+                year, month, day = date_match.groups()
+                # Use direct date-based directory structure under hsa-ready
+                output_dir = Path("output/hsa-ready") / publication / year / month / day
+            else:
+                # Fallback to original approach but still under hsa-ready
+                logger.warning(f"Could not parse date from issue_id: {issue_id}, using default structure") 
+                output_dir = Path("output/hsa-ready") / publication / issue_id
+        
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Copy the OCR file to the raw.txt location expected by the pipeline
@@ -115,13 +136,10 @@ def process_ocr_file(ocr_file: Path, issue_id: str) -> bool:
         headlines = splitter.detect_headlines(cleaned_text)
         articles = splitter.extract_articles(cleaned_text, headlines)
         
-        # Save articles
-        articles_dir = output_dir / "articles"
-        articles_dir.mkdir(exist_ok=True)
-        
+        # Save articles directly in the output directory (no "articles" subdirectory)
         logger.info(f"Extracted {len(articles)} articles")
         for i, article in enumerate(articles):
-            article_file = articles_dir / f"article_{i:04d}.json"
+            article_file = output_dir / f"article_{i:04d}.json"
             with open(article_file, 'w', encoding='utf-8') as f:
                 json.dump(article, f, indent=2)
         
@@ -177,10 +195,16 @@ def main():
     
     # Determine which issues to process
     if len(sys.argv) > 1:
-        # If argument provided, treat it as an issues file
-        issues_file = sys.argv[1]
-        TEST_ISSUES = load_issues_file(issues_file)
-        logger.info(f"Loaded {len(TEST_ISSUES)} issues from {issues_file}")
+        arg = sys.argv[1]
+        # Check if the argument is directly an issue ID (starts with "per_")
+        if arg.startswith("per_"):
+            TEST_ISSUES = [arg]
+            logger.info(f"Processing single issue: {arg}")
+        else:
+            # Otherwise treat it as an issues file
+            issues_file = arg
+            TEST_ISSUES = load_issues_file(issues_file)
+            logger.info(f"Loaded {len(TEST_ISSUES)} issues from {issues_file}")
     else:
         # Otherwise use the default test issues
         TEST_ISSUES = DEFAULT_TEST_ISSUES
@@ -190,8 +214,15 @@ def main():
     for issue_id in TEST_ISSUES:
         logger.info(f"Processing issue: {issue_id}")
         
-        # Download OCR
-        ocr_file = download_ocr_with_curl(issue_id, temp_dir)
+        # Check if OCR file already exists in temp_downloads
+        existing_ocr = temp_dir / f"{issue_id}.txt"
+        if existing_ocr.exists() and existing_ocr.stat().st_size > 0:
+            logger.info(f"Using existing OCR file for {issue_id}")
+            ocr_file = existing_ocr
+        else:
+            # Download OCR
+            ocr_file = download_ocr_with_curl(issue_id, temp_dir)
+            
         if not ocr_file:
             logger.error(f"Failed to download {issue_id}")
             results["failed"].append(issue_id)

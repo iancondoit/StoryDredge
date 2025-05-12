@@ -21,6 +21,7 @@ import argparse
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
+import re
 
 from src.utils.errors import StoryDredgeError
 from src.utils.config import get_config_manager
@@ -103,7 +104,28 @@ class BatchProcessor:
             self.logger.info(f"Issue {issue_id} already processed, skipping")
             return True
         
-        issue_output_dir = self.output_dir / issue_id
+        # Parse the issue_id to create a cleaner directory structure
+        # Example: per_atlanta-constitution_1922-01-05_54_207
+        parts = issue_id.split("_")
+        
+        # Default to original approach if we can't parse properly
+        if len(parts) < 3 or not parts[1] or not re.match(r'^\d{4}-\d{2}-\d{2}', parts[2]):
+            self.logger.warning(f"Could not parse issue_id: {issue_id}, using default structure")
+            issue_output_dir = self.output_dir / "hsa-ready" / "unknown" / issue_id
+        else:
+            # Extract publication and date
+            publication = parts[1]
+            date_match = re.match(r'(\d{4})-(\d{2})-(\d{2})', parts[2])
+            
+            if date_match:
+                year, month, day = date_match.groups()
+                # Use direct date-based directory structure under hsa-ready
+                issue_output_dir = self.output_dir / "hsa-ready" / publication / year / month / day
+            else:
+                # Fallback to original approach but still under hsa-ready
+                self.logger.warning(f"Could not parse date from issue_id: {issue_id}, using default structure")
+                issue_output_dir = self.output_dir / "hsa-ready" / publication / issue_id
+        
         issue_output_dir.mkdir(exist_ok=True, parents=True)
         
         self.logger.info(f"Processing issue: {issue_id}")

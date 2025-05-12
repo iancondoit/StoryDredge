@@ -1,9 +1,143 @@
-# StoryDredge v1.0.0 (stable)
+# StoryDredge
 
-A streamlined pipeline for processing historical newspaper OCR using local LLMs.
+StoryDredge is a pipeline for extracting, cleaning, and structuring newspaper articles from OCR text. It produces structured data for use in the Human Story Atlas (HSA).
 
-This project processes newspaper issues from archive.org and extracts structured news articles for 
-integration with the Human Story Atlas (HSA).
+## Overview
+
+StoryDredge processes newspaper issues from archive.org and transforms them into a structured format for the Human Story Atlas. The pipeline handles the entire workflow:
+
+1. **Fetching**: Download OCR text from archive.org
+2. **Cleaning**: Normalize and clean the OCR text
+3. **Splitting**: Extract individual articles from the text
+4. **Classifying**: Categorize articles by type and extract metadata
+5. **Formatting**: Format articles in HSA-ready JSON format
+
+The pipeline produces a clean, standardized directory structure that organizes articles by publication, year, month, and day.
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/StoryDredge.git
+cd StoryDredge
+```
+
+2. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Universal Pipeline
+
+The universal pipeline provides a unified workflow for processing newspaper issues from archive.org:
+
+```bash
+# Process a single issue
+./scripts/run_universal_pipeline.sh --issue per_atlanta-constitution_1922-01-01_54_203
+
+# Process multiple issues from a file
+./scripts/run_universal_pipeline.sh --issues-file data/issue_list.txt --output-dir output/custom-output
+```
+
+For more details, see the [pipeline usage documentation](docs/PIPELINE_USAGE.md).
+
+### Local Issue Processing
+
+If you already have OCR files downloaded, you can process them using the local issue processor:
+
+```bash
+# Process a local OCR file
+python scripts/process_local_issue.py --issue per_atlanta-constitution_1922-01-01_54_203 \
+    --ocr-file temp_downloads/per_atlanta-constitution_1922-01-01_54_203.txt
+```
+
+### Output Structure
+
+The pipeline produces a clean directory structure:
+
+```
+output/
+└── hsa-ready-final/
+    └── publication-name/
+        └── year/
+            └── month/
+                └── day/
+                    ├── yyyy-mm-dd--article-title-1.json
+                    ├── yyyy-mm-dd--article-title-2.json
+                    └── ...
+```
+
+### Article Format
+
+Each article is stored as a JSON file with the following structure:
+
+```json
+{
+  "headline": "Article Headline",
+  "body": "Article text content...",
+  "section": "news",
+  "tags": ["politics", "election", "Georgia"],
+  "timestamp": "1922-01-01T00:00:00.000Z",
+  "publication": "Atlanta Constitution",
+  "source_issue": "per_atlanta-constitution_1922-01-01_54_203",
+  "source_url": "https://archive.org/details/per_atlanta-constitution_1922-01-01_54_203"
+}
+```
+
+## Components
+
+StoryDredge consists of the following core components:
+
+### Fetcher
+- Downloads OCR text from archive.org
+- Handles caching and retry logic
+- Supports various archive.org identifiers
+
+### Cleaner
+- Normalizes OCR text
+- Removes artifacts and fixes common OCR errors
+- Prepares text for article extraction
+
+### Splitter
+- Identifies headlines and article boundaries
+- Extracts individual articles from cleaned text
+- Handles various newspaper layouts
+
+### Classifier
+- Categorizes articles by type (news, sports, opinion, etc.)
+- Extracts metadata (people, organizations, locations)
+- Uses NLP techniques for classification
+
+### Formatter
+- Transforms articles into HSA-ready format
+- Organizes output in a standardized directory structure
+- Validates articles against HSA requirements
+
+## Testing
+
+Run the test suite to verify StoryDredge functionality:
+
+```bash
+python -m unittest discover tests
+```
+
+## Documentation
+
+- [Pipeline Usage Guide](docs/PIPELINE_USAGE.md): Detailed instructions for using the pipeline
+- [Architecture Overview](docs/ARCHITECTURE.md): Overview of the StoryDredge architecture
+- [Component Documentation](docs/components/): Documentation for individual components
+
+## License
+
+[MIT License](LICENSE)
 
 ## Recent Improvements
 
